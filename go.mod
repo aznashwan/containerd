@@ -30,7 +30,7 @@ require (
 	github.com/emicklei/go-restful/v3 v3.8.0
 	github.com/fsnotify/fsnotify v1.5.1
 	github.com/google/go-cmp v0.5.8
-	github.com/google/uuid v1.2.0
+	github.com/google/uuid v1.3.0
 	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
 	github.com/hashicorp/go-multierror v1.1.1
@@ -136,3 +136,5 @@ require (
 	sigs.k8s.io/structured-merge-diff/v4 v4.2.1 // indirect
 	sigs.k8s.io/yaml v1.3.0 // indirect
 )
+
+replace github.com/Microsoft/hcsshim => github.com/TBBle/hcsshim v0.10.0-rc.0.0.20220723075744-23cd1003a2b9

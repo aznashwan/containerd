@@ -38,7 +38,7 @@ require (
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/google/go-cmp v0.5.8 // indirect
-	github.com/google/uuid v1.2.0 // indirect
+	github.com/google/uuid v1.3.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/imdario/mergo v0.3.12 // indirect
@@ -74,3 +74,5 @@ require (
 // in the "require" section above are still taken into account for version
 // resolution if newer.
 replace github.com/containerd/containerd => ../../
+
+replace github.com/Microsoft/hcsshim => github.com/TBBle/hcsshim v0.10.0-rc.0.0.20220723075744-23cd1003a2b9
