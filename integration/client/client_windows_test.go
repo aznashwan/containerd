@@ -57,6 +57,8 @@ func init() {
 		testImage = "mcr.microsoft.com/windows/nanoserver:2004"
 	case osversion.V20H2:
 		testImage = "mcr.microsoft.com/windows/nanoserver:20H2"
+	case osversion.V21H2Server:
+		testImage = "mcr.microsoft.com/windows/nanoserver:ltsc2022"
 	default:
 		fmt.Println("No test image defined for Windows build version:", b)
 		panic("No windows test image found for this Windows build")
