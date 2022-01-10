@@ -171,7 +171,8 @@ jobs:
 
       - name: GetCritestRepo
         run: |
-          ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} azureuser@${{ env.VM_PUB_IP }} "git clone https://github.com/kubernetes-sigs/cri-tools c:/cri-tools"
+          # HACK(aznashwan): change to upstream repo ref when merged:
+          ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} azureuser@${{ env.VM_PUB_IP }} "git clone https://github.com/aznashwan/cri-tools -b benchmarking c:/cri-tools"
 
       - name: BuildCritest
         run: |
