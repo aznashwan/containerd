@@ -26,6 +26,7 @@ env:
   BUSYBOX_TESTING_IMAGE_REF: "k8s.gcr.io/e2e-test-images/busybox:1.29-2"
   RESOURCE_CONSUMER_TESTING_IMAGE_REF: "k8s.gcr.io/e2e-test-images/resource-consumer:1.10"
   WEBSERVER_TESTING_IMAGE_REF: "k8s.gcr.io/e2e-test-images/nginx:1.14-2"
+  GOOGLE_BUCKET: "gs://containerd-integration/"
 
 
 jobs:
@@ -37,11 +38,9 @@ jobs:
         - win_ver: ltsc2019
           AZURE_IMG: "MicrosoftWindowsServer:WindowsServer:2019-Datacenter-with-Containers-smalldisk:17763.1935.2105080716"
           AZURE_RESOURCE_GROUP: ctrd-integration-ltsc2019-${{ github.run_id }}
-          GOOGLE_BUCKET: "gs://containerd-integration/logs/windows-ltsc2019/"
         - win_ver: ltsc2022
           AZURE_IMG: "MicrosoftWindowsServer:WindowsServer:2022-datacenter-smalldisk-g2:20348.169.2108120020"
           AZURE_RESOURCE_GROUP: ctrd-integration-ltsc2022-${{ github.run_id }}
-          GOOGLE_BUCKET: "gs://containerd-integration/logs/windows-ltsc2022/"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
@@ -54,9 +53,12 @@ jobs:
         run: |
           STARTED_TIME=$(date +%s)
           LOGS_DIR=$HOME/$STARTED_TIME
+          BENCHMARKS_DIR=$HOME/Benchmarks/$STARTED_TIME
           echo "STARTED_TIME=$STARTED_TIME" >> $GITHUB_ENV
           echo "LOGS_DIR=$LOGS_DIR" >> $GITHUB_ENV
           mkdir -p $LOGS_DIR/artifacts
+          mkdir -p $BENCHMARKS_DIR
+          echo "BENCHMARKS_DIR=$BENCHMARKS_DIR" >> $GITHUB_ENV
 
           jq -n --arg node temp --arg timestamp $STARTED_TIME '$timestamp|tonumber|{timestamp:.,$node}' > $LOGS_DIR/started.json
 
@@ -147,7 +149,7 @@ jobs:
           ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} azureuser@${{ env.VM_PUB_IP }} "sh.exe -c 'cd /c/containerd && (make integration | tee /c/Logs/integration.log)'"
           ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} azureuser@${{ env.VM_PUB_IP }} "sh.exe -c 'cat /c/Logs/integration.log | go-junit-report.exe > /c/Logs/junit_00.xml'"
 
-      - name: PrepareRepoList
+      - name: PrepareCriConfigFiles
         run: |
            ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} azureuser@${{ env.VM_PUB_IP }} "sh -c 'cat > c:/repolist.toml'" <<'EOF'
                busybox = ${{ env.BUSYBOX_TESTING_IMAGE_REF }}
@@ -156,6 +158,12 @@ jobs:
            ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} azureuser@${{ env.VM_PUB_IP }} "sh -c 'cat > c:/cri-test-images.yaml'" <<'EOF'
                defaultTestContainerImage: ${{ env.BUSYBOX_TESTING_IMAGE_REF }}
                webServerTestImage: ${{ env.WEBSERVER_TESTING_IMAGE_REF }}
+           EOF
+           ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} azureuser@${{ env.VM_PUB_IP }} "sh -c 'cat > c:/cri-benchmark-settings.yaml'" <<'EOF'
+               containersNumber: 200
+               containersNumberParallel: 1
+               podsNumber: 1000
+               podsNumberParallel: 1
            EOF
 
       - name: RunCRIIntegrationTests
@@ -190,6 +198,15 @@ jobs:
               mv ${{ env.LOGS_DIR }}/$(basename $f) $f
           done
 
+      - name: RunCritestBenchmarks
+        run: |
+          ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} azureuser@${{ env.VM_PUB_IP }} "mkdir -p c:/Benchmarks"
+          ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} azureuser@${{ env.VM_PUB_IP }} "powershell.exe -command { Start-Process -FilePath C:\containerd\bin\containerd.exe -NoNewWindow -RedirectStandardError true -PassThru ; get-process | sls containerd ; start-sleep 5 ; c:\cri-tools\build\bin\critest.exe --runtime-endpoint=\"npipe:\\\\.\\pipe\\containerd-containerd\" --test-images-file='c:\cri-test-images.yaml' --report-dir='c:\Logs' --benchmarking-params-file 'c:/cri-benchmark-settings.yaml' --benchmarking-output-dir 'c:\Benchmarks' --ginko.focus='benchmark' }"
+
+      - name: PullBenchmarksFromWinNode
+        run: |
+          scp -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} azureuser@${{ env.VM_PUB_IP }}:c:/Benchmarks/* ${{ env.BENCHMARKS_DIR }}
+
       - name: FinishJob
         run: |
           jq -n --arg result SUCCESS --arg timestamp $(date +%s) '$timestamp|tonumber|{timestamp:.,$result}' > ${{ env.LOGS_DIR }}/finished.json
@@ -212,8 +229,9 @@ jobs:
       - name: UploadArtifacts
         if: steps.AssignGcpCreds.outputs.GCP_PROJECT_ID && steps.AssignGcpCreds.outputs.GCP_SA_KEY
         run: |
-          gsutil cp -r ${{ env.LOGS_DIR }} ${{ matrix.GOOGLE_BUCKET }}
-          gsutil cp $HOME/latest-build.txt ${{ matrix.GOOGLE_BUCKET }}
+          gsutil cp -r ${{ env.LOGS_DIR }} ${{ env.GOOGLE_BUCKET }}/logs/${{ matrix.win_ver }}/
+          gsutil cp $HOME/latest-build.txt ${{ env.GOOGLE_BUCKET }}/logs/${{ matrix.win_ver }}/
+          gsutil cp -r ${{ env.BENCHMARKS_DIR }} ${{ env.GOOGLE_BUCKET }}/benchmarks/${{ matrix.win_ver }}
 
       - name: ResourceCleanup
         uses: azure/CLI@v1
