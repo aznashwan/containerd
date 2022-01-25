@@ -1,0 +1,270 @@
+# Workflow intended to run CRI benchmarks on Linux.
+
+name: Linux Benchmarks
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    secrets:
+      AZURE_SUB_ID:
+        required: true
+      AZURE_CREDS:
+        required: true
+      GCP_SERVICE_ACCOUNT:
+        required: true
+      GCP_WORKLOAD_IDENTITY_PROVIDER:
+        required: true
+
+env:
+  # Benchmarking-related options:
+  BENCHMARK_TYPE_PODS: "pods"
+  BENCHMARK_TYPE_CONTAINERS: "containers"
+
+  # Azure-related options:
+  AZURE_DEFAULT_LOCATION: "westeurope"
+  AZURE_SUBSCRIPTION_ID: "${{ secrets.AZURE_SUB_ID }}"
+  AZURE_DEFAULT_VM_SIZE: "Standard_D2s_v3"
+  AZURE_DEFAULT_PASSWORD: "Passw0rdAdmin"
+
+  # General options:
+  ADMIN_USERNAME: "azureuser"
+  DEFAULT_ADMIN_PASSWORD: "Passw0rdAdmin"
+  REMOTE_VM_BIN_PATH: "/home/azureuser/containerd/bin"
+  SSH_OPTS: "-o ServerAliveInterval=20 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+  GOOGLE_BUCKET_ROOT: "containerd-benchmarking/linux-benchmarks"
+
+  # Options related to the remote VM:
+  VM_HOME: "/home/azureuser"
+  VM_GOPATH: "/home/azureuser/gopath"
+  VM_CRITOOLS_PATH: "/home/azureuser/cri-tools"
+  VM_CRITEST_BENCHMARK_OPTIONS_FILEPATH: "/home/azureuser/cri-benchmark-settings.yaml"
+  VM_CRITEST_IMAGE_OPTIONS_FILEPATH: "/home/azureuser/cri-test-images.yaml"
+  VM_CRITEST_BENCHMARK_OUTPUT_DIR: "/home/azureuser/benchmarks"
+  VM_CRITEST_REPORT_DIR: "/home/azureuser/critest-logs"
+  VM_CONTAINERD_PATH: "/home/azureuser/containerd"
+  VM_CONTAINERD_LOGFILE: "/home/azureuser/critest-logs/containerd.log"
+
+jobs:
+  linuxBenchmarking:
+    runs-on: ubuntu-latest
+
+    # NOTE: the following permissions are required by `google-github-actions/auth`:
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    strategy:
+      matrix:
+        benchmark_params: [
+          {
+            "os_distro": "ubuntu",
+            "os_release": "20.04",
+            "azure_vm_size": "Standard_D2s_v3",
+            "azure_vm_image": "Canonical:0001-com-ubuntu-server-focal:20_04-lts:20.04.202201180",
+          }
+    ]
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install required packages
+        run: |
+          sudo apt-get install xmlstarlet -y
+
+      - name: DefineRunVariables
+        run: |
+          WORKFLOW_STARTED_TIME=$(date +%s)
+          echo "WORKFLOW_STARTED_TIME=$WORKFLOW_STARTED_TIME" >> $GITHUB_ENV
+
+          # Azure-related vars:
+          AZURE_RESOURCE_GROUP_NAME="ctrd-benchmarking-${{ matrix.benchmark_params.os_distro }}-${{ matrix.benchmark_params.os_release }}-$WORKFLOW_STARTED_TIME"
+          echo "AZURE_RESOURCE_GROUP_NAME=$AZURE_RESOURCE_GROUP_NAME" >> $GITHUB_ENV
+
+          # Local runner vars:
+          RUNNER_BENCHMARKS_DIR=$HOME/benchmarks/$WORKFLOW_STARTED_TIME
+          mkdir -p "$RUNNER_BENCHMARKS_DIR"
+          echo "RUNNER_BENCHMARKS_DIR=$RUNNER_BENCHMARKS_DIR" >> $GITHUB_ENV
+          jq -n --arg node temp --arg timestamp $WORKFLOW_STARTED_TIME '$timestamp|tonumber|{timestamp:.,$node}' > "$RUNNER_BENCHMARKS_DIR/started.json"
+
+          # Google Cloud-related vars:
+          BENCHMARK_GOOGLE_BUCKET="${{ env.GOOGLE_BUCKET_ROOT }}/${{ matrix.benchmark_params.os_distro }}/${{ matrix.benchmark_params.os_release }}/$WORKFLOW_STARTED_TIME"
+          echo "BENCHMARK_GOOGLE_BUCKET=$BENCHMARK_GOOGLE_BUCKET" >> $GITHUB_ENV
+
+      - name: Generate ssh key pair
+        run: |
+          mkdir -p $HOME/.ssh/
+          ssh-keygen -t rsa -b 4096 -C "ci@containerd.com" -f $HOME/.ssh/id_rsa -q -N ""
+          echo "SSH_PUB_KEY=$(cat $HOME/.ssh/id_rsa.pub)" >> $GITHUB_ENV
+          echo "SSH_PUB_KEY_PATH=$HOME/.ssh/id_rsa.pub" >> $GITHUB_ENV
+
+      - name: AZLogin
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDS }}
+
+      - name: AZResourceGroupCreate
+        uses: azure/CLI@v1
+        with:
+          inlinescript: |
+            az group create -n ${{ env.AZURE_RESOURCE_GROUP_NAME }} -l ${{ env.AZURE_DEFAULT_LOCATION }} --tags creationTimestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+      - name: AZTestVMCreate
+        uses: azure/CLI@v1
+        with:
+          inlinescript: |
+            az vm create -n "${{ matrix.benchmark_params.os_distro }}-${{ matrix.benchmark_params.os_release }}-benchmarks" --admin-username ${{ env.ADMIN_USERNAME }} --admin-password ${{ env.DEFAULT_ADMIN_PASSWORD }} --image ${{ matrix.benchmark_params.azure_vm_image }} -g ${{ env.AZURE_RESOURCE_GROUP_NAME }} --nsg-rule SSH --size ${{ matrix.benchmark_params.azure_vm_size }} --ssh-key-value "${{ env.SSH_PUB_KEY }}"
+
+      - name: GetAZVMPublicIP
+        uses: azure/CLI@v1
+        with:
+          inlinescript: |
+            echo "VM_PUB_IP=$(az network public-ip list -g ${{ env.AZURE_RESOURCE_GROUP_NAME }} | jq '.[0]["ipAddress"]' | tr -d '\"')" >> $GITHUB_ENV
+
+      - name: TestSSHConnection
+        run: |
+          if ! ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }} "hostname"; then
+            exit 1
+          fi
+
+      - name: CloneContainerDRepo
+        run: |
+          # Create directories:
+          ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }} "mkdir -p ${{ env.VM_GOPATH }}"
+
+          # Clone containerd:
+          ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }} "git clone http://github.com/containerd/containerd ${{ env.VM_CONTAINERD_PATH }}"
+          CONTAINERD_COMMIT=`ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }} "sh -c 'cd ${{ env.VM_CONTAINERD_PATH }} && git log -1 --format=%H'"`
+          echo "CONTAINERD_COMMIT=$CONTAINERD_COMMIT" >> $GITHUB_ENV
+
+      - name: PrepareTestingEnvUbuntu
+        if: ${{ matrix.benchmark_params.os_distro }} == "ubuntu"
+        run: |
+          # Install deps:
+          ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }} "sh -c 'cat > /tmp/setup-containerd-deps.sh'" <<'EOF'
+              set -x
+              set -e
+
+              export PATH=$PATH:${{ env.VM_GOPATH }}
+
+              # ContainerD deps:
+              bash ${{ env.VM_CONTAINERD_PATH }}/script/setup/install-seccomp
+              bash RUNC_FLAVOR=v2 ${{ env.VM_CONTAINERD_PATH }}/script/setup/install-runc
+              bash ${{ env.VM_CONTAINERD_PATH }}/script/setup/install-cni
+
+              # Protobuf:
+              bash ${{ env.VM_CONTAINERD_PATH }}/script/setup/install-protobuf
+              chmod +x /usr/local/bin/protoc
+              chmod og+rx /usr/local/include/google /usr/local/include/google/protobuf /usr/local/include/google/protobuf/compiler
+              chmod -R og+r /usr/local/include/google/protobuf/
+              protoc --version
+
+              # Add ContainerD config:
+              mkdir -p /etc/containerd
+              printf "[plugins.cri.containerd.default_runtime]\nruntime_type = \"v2\"" > /etc/containerd/config.toml
+          EOF
+          ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }} "sudo bash /tmp/setup-containerd-deps.sh"
+
+          # Make containerd:
+          ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }} "bash -c 'cd ${{ env.VM_CONTAINERD_PATH }}; make binaries; sudo make install'"
+
+      - name: PrepareBenchmarkParamFiles 
+        run: |
+           ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} azureuser@${{ env.VM_PUB_IP }} "sh -c 'cat > ${{ env.VM_CRITEST_IMAGE_OPTIONS_FILEPATH }}'" <<'EOF'
+               defaultTestContainerImage: ${{ env.BUSYBOX_TESTING_IMAGE_REF }}
+               webServerTestImage: ${{ env.WEBSERVER_TESTING_IMAGE_REF }}
+           EOF
+           ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }} "sh -c 'cat > ${{ env.VM_CRITEST_BENCHMARK_OPTIONS_FILEPATH }}'" <<'EOF'
+              containersNumber: 200
+              containersNumberParallel: 1
+              podsNumber: 1
+              podsNumberParallel: 1
+           EOF
+           ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }} "sh -c 'mkdir -p ${{ env.VM_CRITEST_REPORT_DIR }}'"
+           ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }} "sh -c 'mkdir -p ${{ env.VM_CRITEST_BENCHMARK_OUTPUT_DIR }}'"
+
+      - name: GetCritestRepo
+        run: |
+          # HACK(aznashwan): revert `cri-tools` repo:
+          ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }} "git clone https://github.com/aznashwan/cri-tools -b benchmarking ${{ env.VM_CRITOOLS_PATH }}"
+
+      - name: BuildCritest
+        run: |
+          ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }} "bash -c 'cd ${{ env.VM_CRITOOLS_PATH }} && make install -e BINDIR=/usr/local/bin'"
+
+      - name: RunCritestBenchmarks
+        run: |
+          BENCHMARK_STARTED_TIME=$(date +%s)
+          echo "BENCHMARK_STARTED_TIME=$BENCHMARK_STARTED_TIME" >> $GITHUB_ENV
+
+          ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} azureuser@${{ env.ADMIN_USERNAME }} "sh -c 'cat > /tmp/run-containerd-benchmarks.sh'" <<'EOF'
+              set -x
+              set -e
+
+              export PATH=$PATH:${{ env.VM_GOPATH }}
+
+              # Start ContainerD:
+              containerd -log-level debug &> ${{ env.VM_CONTAINERD_LOGFILE }} & 
+              ctr version
+
+              # Run critest:
+              critest --runtime-endpoint="/var/run/containerd/containerd.sock" --test-images-file='${{ env.VM_CRITEST_IMAGE_OPTIONS_FILEPATH }}' --report-dir='${{ env.VM_CRITEST_REPORT_DIR }}' --benchmark --benchmarking-params-file '${{ env.VM_CRITEST_BENCHMARK_OPTIONS_FILEPATH }}' --benchmarking-output-dir '${{ env.VM_CRITEST_BENCHMARK_OUTPUT_DIR }}'
+
+           EOF
+          ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }} "sudo bash /tmp/run-containerd-benchmarks.sh"
+
+          BENCHMARK_ENDED_TIME=$(date +%s)
+          echo "BENCHMARK_ENDED_TIME=$BENCHMARK_ENDED_TIME" >> $GITHUB_ENV
+
+      - name: PullArtifactsFromVm
+        run: |
+          # Pull all logs:
+          scp -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} -r ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }}:${{ env.VM_CRITEST_REPORT_DIR }} "$RUNNER_BENCHMARKS_DIR/"
+
+          # Pull benchmarks:
+          scp -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} -r ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }}:${{ env.VM_CRITEST_BENCHMARK_OUTPUT_DIR }} "$RUNNER_BENCHMARKS_DIR/"
+
+          # Pull config files for later reference:
+          scp -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }}:${{ env.VM_CRITEST_IMAGE_OPTIONS_FILEPATH }} "$RUNNER_BENCHMARKS_DIR/"
+          scp -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }}:${{ env.VM_CRITEST_BENCHMARK_OPTIONS_FILEPATH }} "$RUNNER_BENCHMARKS_DIR/"
+
+      - name: FinishJob
+        run: |
+          # Write a file detailing the options used for the job:
+          cat > "$RUNNER_BENCHMARKS_DIR/benchmark-run-params.yaml" <<'EOF'
+            workflowRunId: ${{ env.WORKFLOW_STARTED_TIME }}
+            benchmarkStartedTime: ${{ env.BENCHMARK_STARTED_TIME }}
+            benchmarkEndedTime: ${{ env.BENCHMARK_ENDED_TIME }} 
+            windowsVersion: ${{ matrix.benchmark_params.windows_version }}
+            windowsAzureImage: ${{ matrix.benchmark_params.azure_vm_image }}
+            windowsAzureVmSize: ${{ matrix.benchmark_params.azure_vm_size }}
+            containerdCommit: ${{ env.CONTAINERD_COMMIT }}
+            hcsshimTag: ${{ env.HCSSHIM_TAG }}
+          EOF
+
+      - name: AssignGcpCreds
+        id: AssignGcpCreds
+        run: |
+          echo '::set-output name=GCP_SERVICE_ACCOUNT::${{ secrets.GCP_SERVICE_ACCOUNT }}'
+          echo '::set-output name=GCP_WORKLOAD_IDENTITY_PROVIDER::${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}'
+
+      - name: AuthGcp
+        uses: google-github-actions/auth@v0
+        if: steps.AssignGcpCreds.outputs.GCP_SERVICE_ACCOUNT && steps.AssignGcpCreds.outputs.GCP_WORKLOAD_IDENTITY_PROVIDER
+        with:
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+
+      - name: UploadBenchmarksData
+        uses: google-github-actions/upload-cloud-storage@v0
+        if: steps.AssignGcpCreds.outputs.GCP_SERVICE_ACCOUNT && steps.AssignGcpCreds.outputs.GCP_WORKLOAD_IDENTITY_PROVIDER
+        with:
+          path: ${{ env.RUNNER_BENCHMARKS_DIR }}
+          destination: ${{ env.BENCHMARK_GOOGLE_BUCKET }}
+          parent: false
+
+      - name: ResourceCleanup
+        uses: azure/CLI@v1
+        if: always()
+        with:
+          inlinescript: |
+            az group delete -g ${{ env.AZURE_RESOURCE_GROUP_NAME }} --yes
