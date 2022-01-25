@@ -175,7 +175,10 @@ jobs:
 
       - name: MakeContainerDBins
         run: |
-          ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} azureuser@${{ env.VM_PUB_IP }} "git clone http://github.com/containerd/containerd c:\\containerd "
+          ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} azureuser@${{ env.VM_PUB_IP }} "git clone http://github.com/containerd/containerd c:\\containerd"
+          CONTAINERD_COMMIT=`ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }} "sh.exe -c 'cd cd c:\\containerd && git log -1 --format=%h'"`
+          echo "CONTAINERD_COMMIT=$CONTAINERD_COMMIT" >> $GITHUB_ENV
+
           ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} azureuser@${{ env.VM_PUB_IP }} "cd c:\containerd ; make binaries"
           ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} azureuser@${{ env.VM_PUB_IP }} "git clone http://github.com/Microsoft/hcsshim c:\containerd\hcsshim "
 
@@ -252,7 +255,7 @@ jobs:
             windowsVersion: ${{ matrix.benchmark_params.windows_version }}
             windowsAzureImage: ${{ matrix.benchmark_params.azure_vm_image }}
             windowsAzureVmSize: ${{ matrix.benchmark_params.azure_vm_size }}
-            containerdCommit: ${{ github.sha }}
+            containerdCommit: ${{ env.CONTAINERD_COMMIT }}
             hcsshimTag: ${{ env.HCSSHIM_TAG }}
           EOF
 
