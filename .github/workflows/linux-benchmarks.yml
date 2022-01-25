@@ -129,7 +129,7 @@ jobs:
       - name: CloneContainerDRepo
         run: |
           # Create directories:
-          ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }} "mkdir -p ${{ env.VM_GOPATH }}"
+          ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }} "mkdir -p ${{ env.VM_GOPATH }}/bin"
 
           # Clone containerd:
           ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }} "git clone http://github.com/containerd/containerd ${{ env.VM_CONTAINERD_PATH }}"
@@ -144,7 +144,7 @@ jobs:
               set -x
               set -e
 
-              export PATH=$PATH:${{ env.VM_GOPATH }}
+              export PATH=$PATH:${{ env.VM_GOPATH }}/bin
 
               # ContainerD deps:
               bash ${{ env.VM_CONTAINERD_PATH }}/script/setup/install-seccomp
@@ -264,7 +264,8 @@ jobs:
 
       - name: ResourceCleanup
         uses: azure/CLI@v1
-        if: always()
+        # TODO(aznashwan): reinstate after testing:
+        # if: always()
         with:
           inlinescript: |
             az group delete -g ${{ env.AZURE_RESOURCE_GROUP_NAME }} --yes
