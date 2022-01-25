@@ -20,6 +20,11 @@ env:
   BENCHMARK_TYPE_PODS: "pods"
   BENCHMARK_TYPE_CONTAINERS: "containers"
 
+  # Test image options:
+  BUSYBOX_TESTING_IMAGE_REF: "k8s.gcr.io/e2e-test-images/busybox:1.29-2"
+  RESOURCE_CONSUMER_TESTING_IMAGE_REF: "k8s.gcr.io/e2e-test-images/resource-consumer:1.10"
+  WEBSERVER_TESTING_IMAGE_REF: "k8s.gcr.io/e2e-test-images/nginx:1.14-2"
+
   # Azure-related options:
   AZURE_DEFAULT_LOCATION: "westeurope"
   AZURE_SUBSCRIPTION_ID: "${{ secrets.AZURE_SUB_ID }}"
@@ -27,6 +32,7 @@ env:
   AZURE_DEFAULT_PASSWORD: "Passw0rdAdmin"
 
   # General options:
+  GOLANG_RELEASE_URL: "https://go.dev/dl/go1.17.6.linux-amd64.tar.gz"
   ADMIN_USERNAME: "azureuser"
   DEFAULT_ADMIN_PASSWORD: "Passw0rdAdmin"
   REMOTE_VM_BIN_PATH: "/home/azureuser/containerd/bin"
@@ -59,7 +65,7 @@ jobs:
           {
             "os_distro": "ubuntu",
             "os_release": "20.04",
-            "azure_vm_size": "Standard_D2s_v3",
+            "azure_vm_size": "Standard_D32s_v3",
             "azure_vm_image": "Canonical:0001-com-ubuntu-server-focal:20_04-lts:20.04.202201180",
           }
     ]
@@ -140,16 +146,33 @@ jobs:
         if: ${{ matrix.benchmark_params.os_distro }} == "ubuntu"
         run: |
           # Install deps:
+          # - pk-config required by `containerd/script/install-cni`
+          # - unzip: required by `containerd/script/install-protobuf`
+          # - libbtrfs-dev btrfs-progs: containerd
+          ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }} "sh -c 'sudo apt-get update -y && sudo apt-get install -y gcc make gperf pkg-config unzip libbtrfs-dev btrfs-progs'"
+
           ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }} "sh -c 'cat > /tmp/setup-containerd-deps.sh'" <<'EOF'
               set -x
               set -e
 
-              export PATH=$PATH:${{ env.VM_GOPATH }}/bin
+              # Latest Golang:
+              wget ${{ env.GOLANG_RELEASE_URL }} -O /tmp/go-release.tgz
+              tar -xzvf /tmp/go-release.tgz -C /usr/local
+              echo "export GOROOT=/usr/local/go" >> /tmp/gorc
+              echo "export GOPATH=${{ env.VM_GOPATH }}" >> /tmp/gorc
+              echo "export PATH=/usr/local/go/bin:${{ env.VM_GOPATH }}/bin:${{ env.VM_CONTAINERD_PATH }}/bin:$PATH"  >> /tmp/gorc
+              source /tmp/gorc
+              cat /tmp/gorc >> /root/.bashrc
+              cat /tmp/gorc >> /home/azureuser/.bashrc
+              # chown -R azureuser:azureuser $GOPATH/pkg
 
               # ContainerD deps:
-              bash ${{ env.VM_CONTAINERD_PATH }}/script/setup/install-seccomp
-              bash RUNC_FLAVOR=v2 ${{ env.VM_CONTAINERD_PATH }}/script/setup/install-runc
-              bash ${{ env.VM_CONTAINERD_PATH }}/script/setup/install-cni
+              ${{ env.VM_CONTAINERD_PATH }}/script/setup/install-seccomp
+              PATH=$PATH GOPATH=$GOPATH bash ${{ env.VM_CONTAINERD_PATH }}/script/setup/install-runc
+
+              # NOTE(aznashwan): the `install-cni` script expects containerd to have been pulled in `$GOPATH/src`:
+              sed -i.bak -E 's#"$GOPATH"/src/github.com/containerd/containerd/go.mod#${{ env.VM_CONTAINERD_PATH }}/go.mod#' ${{ env.VM_CONTAINERD_PATH }}/script/setup/install-cni
+              PATH=$PATH GOPATH=$GOPATH bash ${{ env.VM_CONTAINERD_PATH }}/script/setup/install-cni
 
               # Protobuf:
               bash ${{ env.VM_CONTAINERD_PATH }}/script/setup/install-protobuf
@@ -160,14 +183,14 @@ jobs:
 
               # Add ContainerD config:
               mkdir -p /etc/containerd
-              printf "[plugins.cri.containerd.default_runtime]\nruntime_type = \"v2\"" > /etc/containerd/config.toml
+              printf "[plugins.cri.containerd.default_runtime]\nruntime_type = \"v2\"\n" > /etc/containerd/config.toml
           EOF
           ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }} "sudo bash /tmp/setup-containerd-deps.sh"
 
           # Make containerd:
           ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }} "bash -c 'cd ${{ env.VM_CONTAINERD_PATH }}; make binaries; sudo make install'"
 
-      - name: PrepareBenchmarkParamFiles 
+      - name: PrepareBenchmarkParamFiles
         run: |
            ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} azureuser@${{ env.VM_PUB_IP }} "sh -c 'cat > ${{ env.VM_CRITEST_IMAGE_OPTIONS_FILEPATH }}'" <<'EOF'
                defaultTestContainerImage: ${{ env.BUSYBOX_TESTING_IMAGE_REF }}
@@ -203,12 +226,11 @@ jobs:
               export PATH=$PATH:${{ env.VM_GOPATH }}
 
               # Start ContainerD:
-              containerd -log-level debug &> ${{ env.VM_CONTAINERD_LOGFILE }} & 
+              ${{ env.VM_CONTAINERD_PATH }}/bin/containerd -log-level debug &> ${{ env.VM_CONTAINERD_LOGFILE }} &
               ctr version
 
               # Run critest:
               critest --runtime-endpoint="/var/run/containerd/containerd.sock" --test-images-file='${{ env.VM_CRITEST_IMAGE_OPTIONS_FILEPATH }}' --report-dir='${{ env.VM_CRITEST_REPORT_DIR }}' --benchmark --benchmarking-params-file '${{ env.VM_CRITEST_BENCHMARK_OPTIONS_FILEPATH }}' --benchmarking-output-dir '${{ env.VM_CRITEST_BENCHMARK_OUTPUT_DIR }}'
-
            EOF
           ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }} "sudo bash /tmp/run-containerd-benchmarks.sh"
 
@@ -233,7 +255,7 @@ jobs:
           cat > "$RUNNER_BENCHMARKS_DIR/benchmark-run-params.yaml" <<'EOF'
             workflowRunId: ${{ env.WORKFLOW_STARTED_TIME }}
             benchmarkStartedTime: ${{ env.BENCHMARK_STARTED_TIME }}
-            benchmarkEndedTime: ${{ env.BENCHMARK_ENDED_TIME }} 
+            benchmarkEndedTime: ${{ env.BENCHMARK_ENDED_TIME }}
             windowsVersion: ${{ matrix.benchmark_params.windows_version }}
             windowsAzureImage: ${{ matrix.benchmark_params.azure_vm_image }}
             windowsAzureVmSize: ${{ matrix.benchmark_params.azure_vm_size }}
@@ -265,7 +287,7 @@ jobs:
       - name: ResourceCleanup
         uses: azure/CLI@v1
         # TODO(aznashwan): reinstate after testing:
-        # if: always()
+        if: always()
         with:
           inlinescript: |
             az group delete -g ${{ env.AZURE_RESOURCE_GROUP_NAME }} --yes
