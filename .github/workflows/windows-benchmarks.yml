@@ -4,7 +4,33 @@ name: Windows Benchmarks
 
 on:
   workflow_dispatch:
+    inputs:
+      containersNumber:
+        type: string
+        default: 100
+        required: true
+      podsNumber:
+        type: string
+        default: 100
+        required: true
+      imagesNumber:
+        type: string
+        default: 100
+        required: true
   workflow_call:
+    inputs:
+      containersNumber:
+        type: string
+        default: 100
+        required: true
+      podsNumber:
+        type: string
+        default: 100
+        required: true
+      imagesNumber:
+        type: string
+        default: 100
+        required: true
     secrets:
       AZURE_SUB_ID:
         required: true
@@ -219,11 +245,11 @@ jobs:
                webServerTestImage: ${{ env.WEBSERVER_TESTING_IMAGE_REF }}
            EOF
            ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.DEFAULT_ADMIN_USERNAME }}@${{ env.VM_PUB_IP }} "sh -c 'cat > ${{ env.VM_CRITEST_BENCHMARK_OPTIONS_FILEPATH }}'" <<'EOF'
-               containersNumber: 500
+               containersNumber: ${{ inputs.containersNumber }}
                containersNumberParallel: 1
-               podsNumber: 500
+               podsNumber: ${{ inputs.podsNumber }}
                podsNumberParallel: 1
-               imagesNumber: 500
+               imagesNumber: ${{ inputs.imagesNumber }}
                imagesNumberParallel: 1
                imagePullingBenchmarkImage: "${{ env.BUSYBOX_TESTING_IMAGE_REF }}"
                # NOTE(aznashwan): timeouts on Windows must be slightly more lenient
