@@ -4,7 +4,89 @@ name: Linux Benchmarks
 
 on:
   workflow_dispatch:
+    inputs:
+      containersNumber:
+        type: string
+        default: 100
+        required: true
+        description: |
+          The total number of containers to benchmark.
+          Can be set to 0 to skip container benchmarks entirely.
+      containersNumberParallel:
+        type: string
+        default: 1
+        required: true
+        description: |
+          The maximum number of container benchmarks to be run in parallel.
+      podsNumber:
+        type: string
+        default: 100
+        required: true
+        description: |
+          The total number of pods to benchmark.
+          Can be set to 0 to skip pods benchmarks entirely.
+      podsNumberParallel:
+        type: string
+        default: 1
+        required: true
+        description: |
+          The maximum number of pod benchmarks to be run in parallel.
+      imagesNumber:
+        type: string
+        default: 100
+        required: true
+        description: |
+          The total number of image operations to benchmark.
+          Can be set to 0 to skip image benchmarks entirely.
+      imagesNumberParallel:
+        type: string
+        default: 1
+        required: true
+        description: |
+          The maximum number of image benchmarks to be run in parallel.
+
   workflow_call:
+    inputs:
+      containersNumber:
+        type: string
+        default: 100
+        required: true
+        description: |
+          The total number of containers to benchmark.
+          Can be set to 0 to skip container benchmarks entirely.
+      containersNumberParallel:
+        type: string
+        default: 1
+        required: true
+        description: |
+          The maximum number of container benchmarks to be run in parallel.
+      podsNumber:
+        type: string
+        default: 100
+        required: true
+        description: |
+          The total number of pods to benchmark.
+          Can be set to 0 to skip pods benchmarks entirely.
+      podsNumberParallel:
+        type: string
+        default: 1
+        required: true
+        description: |
+          The maximum number of pod benchmarks to be run in parallel.
+      imagesNumber:
+        type: string
+        default: 100
+        required: true
+        description: |
+          The total number of image operations to benchmark.
+          Can be set to 0 to skip image benchmarks entirely.
+      imagesNumberParallel:
+        type: string
+        default: 1
+        required: true
+        description: |
+          The maximum number of image benchmarks to be run in parallel.
+
     secrets:
       AZURE_SUB_ID:
         required: true
@@ -198,12 +280,12 @@ jobs:
                webServerTestImage: ${{ env.WEBSERVER_TESTING_IMAGE_REF }}
            EOF
            ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }} "sh -c 'cat > ${{ env.VM_CRITEST_BENCHMARK_OPTIONS_FILEPATH }}'" <<'EOF'
-              containersNumber: 500
-              containersNumberParallel: 1
-              podsNumber: 500
-              podsNumberParallel: 1
-              imagesNumber: 500
-              imagesNumberParallel: 1
+              containersNumber: ${{ inputs.containersNumber }}
+              containersNumberParallel: ${{ inputs.containersNumberParallel }}
+              podsNumber: ${{ inputs.podsNumber }}
+              podsNumberParallel: ${{ inputs.podsNumberParallel }}
+              imagesNumber: ${{ inputs.imagesNumber }}
+              imagesNumberParallel: ${{ inputs.imagesNumberParallel }}
            EOF
            ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }} "sh -c 'mkdir -p ${{ env.VM_CRITEST_REPORT_DIR }}'"
            ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.ADMIN_USERNAME }}@${{ env.VM_PUB_IP }} "sh -c 'mkdir -p ${{ env.VM_CRITEST_BENCHMARK_OUTPUT_DIR }}'"

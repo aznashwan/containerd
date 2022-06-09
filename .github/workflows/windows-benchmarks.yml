@@ -5,32 +5,100 @@ name: Windows Benchmarks
 on:
   workflow_dispatch:
     inputs:
+      hcsshimVersion:
+        type: string
+        default: auto
+        required: true
+        description: |
+          The version of HCSSHIM to build and use for the benchmarks. Set to 'auto' to use the latest commit of HCSSHIM from containerd's .vendor.
       containersNumber:
         type: string
         default: 100
         required: true
+        description: |
+          The total number of containers to benchmark.
+          Can be set to 0 to skip container benchmarks entirely.
+      containersNumberParallel:
+        type: string
+        default: 1
+        required: true
+        description: |
+          The maximum number of container benchmarks to be run in parallel.
       podsNumber:
         type: string
         default: 100
         required: true
+        description: |
+          The total number of pods to benchmark.
+          Can be set to 0 to skip pods benchmarks entirely.
+      podsNumberParallel:
+        type: string
+        default: 1
+        required: true
+        description: |
+          The maximum number of pod benchmarks to be run in parallel.
       imagesNumber:
         type: string
         default: 100
         required: true
+        description: |
+          The total number of image operations to benchmark.
+          Can be set to 0 to skip image benchmarks entirely.
+      imagesNumberParallel:
+        type: string
+        default: 1
+        required: true
+        description: |
+          The maximum number of image benchmarks to be run in parallel.
+
   workflow_call:
     inputs:
+      hcsshimVersion:
+        type: string
+        default: auto
+        required: true
+        description: |
+          The version of HCSSHIM to build and use for the benchmarks. Set to 'auto' to use the latest commit of HCSSHIM from containerd's .vendor.
       containersNumber:
         type: string
         default: 100
         required: true
+        description: |
+          The total number of containers to benchmark.
+          Can be set to 0 to skip container benchmarks entirely.
+      containersNumberParallel:
+        type: string
+        default: 1
+        required: true
+        description: |
+          The maximum number of container benchmarks to be run in parallel.
       podsNumber:
         type: string
         default: 100
         required: true
+        description: |
+          The total number of pods to benchmark.
+          Can be set to 0 to skip pods benchmarks entirely.
+      podsNumberParallel:
+        type: string
+        default: 1
+        required: true
+        description: |
+          The maximum number of pod benchmarks to be run in parallel.
       imagesNumber:
         type: string
         default: 100
         required: true
+        description: |
+          The total number of image operations to benchmark.
+          Can be set to 0 to skip image benchmarks entirely.
+      imagesNumberParallel:
+        type: string
+        default: 1
+        required: true
+        description: |
+          The maximum number of image benchmarks to be run in parallel.
+
     secrets:
       AZURE_SUB_ID:
         required: true
@@ -92,13 +160,11 @@ jobs:
             "windows_version": "ltsc2019",
             "azure_vm_size": "Standard_D8s_v3",
             "azure_vm_image": "MicrosoftWindowsServer:WindowsServer:2019-Datacenter-with-Containers-smalldisk:17763.2565.220202",
-            "hcsshim_version": "auto",
           },
           {
             "windows_version": "ltsc2022",
             "azure_vm_size": "Standard_D8s_v3",
             "azure_vm_image": "MicrosoftWindowsServer:WindowsServer:2022-datacenter-smalldisk-g2:20348.169.2108120020",
-            "hcsshim_version": "auto",
           },
     ]
 
@@ -227,11 +293,11 @@ jobs:
 
       - name: BuildHcsshim
         run: |
-          if [ "${{ matrix.benchmark_params.hcsshim_version }}" = "${{ env.HCSSHIM_VERSION_AUTO }}" ]; then
+          if [ "${{ inputs.hcsshimVersion }}" = "${{ env.HCSSHIM_VERSION_AUTO }}" ]; then
             # Get shim commit from containerd local repo
             HCSSHIM_TAG=$(grep 'Microsoft/hcsshim' go.mod | awk '{ print $2 }');
           else
-            HCSSHIM_TAG=${{ matrix.benchmark_params.hcsshim_version }}
+            HCSSHIM_TAG=${{ inputs.hcsshimVersion }}
           fi
           echo "HCSSHIM_TAG=$HCSSHIM_TAG" >> $GITHUB_ENV
 
@@ -246,16 +312,16 @@ jobs:
            EOF
            ssh -i $HOME/.ssh/id_rsa ${{ env.SSH_OPTS }} ${{ env.DEFAULT_ADMIN_USERNAME }}@${{ env.VM_PUB_IP }} "sh -c 'cat > ${{ env.VM_CRITEST_BENCHMARK_OPTIONS_FILEPATH }}'" <<'EOF'
                containersNumber: ${{ inputs.containersNumber }}
-               containersNumberParallel: 1
+               containersNumberParallel: ${{ inputs.containersNumberParallel }}
                podsNumber: ${{ inputs.podsNumber }}
-               podsNumberParallel: 1
+               podsNumberParallel: ${{ inputs.podsNumberParallel }}
                imagesNumber: ${{ inputs.imagesNumber }}
-               imagesNumberParallel: 1
+               imagesNumberParallel: ${{ inputs.imagesNumberParallel }}
                imagePullingBenchmarkImage: "${{ env.BUSYBOX_TESTING_IMAGE_REF }}"
                # NOTE(aznashwan): timeouts on Windows must be slightly more lenient
                # than the default timeouts used on Linux:
                podBenchmarkTimeoutSeconds: 120
-               imageBenchmarkTimeoutSeconds: 60
+               imageBenchmarkTimeoutSeconds: 120
                containerBenchmarkTimeoutSeconds: 120
                podContainerStartBenchmarkTimeoutSeconds: 120
            EOF
