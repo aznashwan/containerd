@@ -302,9 +302,10 @@ jobs:
               core.setFailed(`One or more CI stages have failed. Please review the outputs of the following stepts: ${failedTasks}.`);
             };
 
-      - name: ResourceCleanup
-        if: always()
-        uses: azure/CLI@v1
-        with:
-          inlinescript: |
-            az group delete -g ${{ matrix.AZURE_RESOURCE_GROUP }} --yes
+      # HACK(aznashwan): skip cleanup for runner inspection:
+      #- name: ResourceCleanup
+      #  if: always()
+      #  uses: azure/CLI@v1
+      #  with:
+      #    inlinescript: |
+      #      az group delete -g ${{ matrix.AZURE_RESOURCE_GROUP }} --yes
