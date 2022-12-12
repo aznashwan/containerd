@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -64,6 +65,7 @@ import (
 	"github.com/containerd/typeurl"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/semaphore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -290,11 +292,16 @@ func (c *Client) NewContainer(ctx context.Context, id string, opts ...NewContain
 			Name: c.runtime,
 		},
 	}
+	logrus.Debugf("### container.client.NewContainer.opts.len(): %d", len(opts))
+	for i, opt := range opts {
+		logrus.Debugf("### container.client.NewContainer.opts[%d]: %s", i, GetFunctionName(opt))
+	}
 	for _, o := range opts {
 		if err := o(ctx, c, &container); err != nil {
 			return nil, err
 		}
 	}
+	logrus.Debugf("### container.client.NewContainer.container: %#v", container)
 	r, err := c.ContainerService().Create(ctx, container)
 	if err != nil {
 		return nil, err
@@ -865,4 +872,8 @@ func toPlatforms(pt []*apitypes.Platform) []ocispec.Platform {
 		}
 	}
 	return platforms
+}
+
+func GetFunctionName(i interface{}) string {
+	return runtime.FuncForPC(reflect.ValueOf(i).Pointer()).Name()
 }
