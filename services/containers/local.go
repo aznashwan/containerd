@@ -29,6 +29,7 @@ import (
 	"github.com/containerd/containerd/plugin"
 	ptypes "github.com/containerd/containerd/protobuf/types"
 	"github.com/containerd/containerd/services"
+	"github.com/sirupsen/logrus"
 	bolt "go.etcd.io/bbolt"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -118,6 +119,9 @@ func (l *local) Create(ctx context.Context, req *api.CreateContainerRequest, _ .
 
 	if err := l.withStoreUpdate(ctx, func(ctx context.Context) error {
 		container := containerFromProto(req.Container)
+
+		logrus.Debugf("### Container request spec: %#v", container.Spec)
+		logrus.Debugf("### Container request spec.Windows: %s", container.Spec.GetValue())
 
 		created, err := l.Store.Create(ctx, container)
 		if err != nil {

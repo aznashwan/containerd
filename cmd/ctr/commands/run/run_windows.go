@@ -19,6 +19,8 @@ package run
 import (
 	gocontext "context"
 	"errors"
+	"reflect"
+	"runtime"
 	"strings"
 
 	"github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/options"
@@ -179,6 +181,15 @@ func NewContainer(ctx gocontext.Context, client *containerd.Client, context *cli
 
 	cOpts = append(cOpts, spec)
 
+	for i, opt := range opts {
+		logrus.Debugf("### opts[%d]: %s -- %#v", i, getFunctionName(opt), opt)
+	}
+
+	cOpts = append(cOpts, spec)
+	for i, opt := range cOpts {
+		logrus.Debugf("### opts[%d]: %s -- %#v", i, getFunctionName(opt), opt)
+	}
+
 	return client.NewContainer(ctx, id, cOpts...)
 }
 
@@ -195,4 +206,8 @@ func getNetNSPath(ctx gocontext.Context, t containerd.Task) (string, error) {
 		return "", nil
 	}
 	return s.Windows.Network.NetworkNamespace, nil
+}
+
+func getFunctionName(i interface{}) string {
+	return runtime.FuncForPC(reflect.ValueOf(i).Pointer()).Name()
 }
