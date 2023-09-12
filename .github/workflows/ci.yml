@@ -1,5 +1,6 @@
 name: CI
 on:
+  workflow_dispatch:
   # When added to a merge queue.
   # See https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue#triggering-merge-group-checks-with-github-actions
   merge_group:
@@ -237,7 +238,7 @@ jobs:
     name: Windows Integration
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
-    needs: [project, linters, protos, man]
+    # needs: [project, linters, protos, man]
     env:
       GOTEST: gotestsum --
 
