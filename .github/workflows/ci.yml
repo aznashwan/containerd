@@ -383,7 +383,7 @@ jobs:
           {
             $skip = "-ginkgo.skip=runtime should support exec with tty=true and stdin=true"
           }
-          critest.exe --runtime-endpoint=npipe://.//pipe//containerd-containerd --test-images-file='${{env.CRI_TEST_IMAGES}}' --report-dir='${{github.workspace}}/critestreport' $skip
+          critest.exe --runtime-endpoint=npipe://.//pipe//containerd-containerd --test-images-file='${{env.CRI_TEST_IMAGES}}' --report-dir='${{github.workspace}}/report' $skip
 
       - uses: actions/upload-artifact@v3
         if: always()
