@@ -5,6 +5,7 @@ on:
   merge_group:
   pull_request:
     branches: ['main', 'release/**']
+  workflow_dispatch:
 
 env:
   # Go version we currently use to build containerd across all CI.
@@ -237,7 +238,7 @@ jobs:
     name: Windows Integration
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
-    needs: [project, linters, protos, man]
+    # needs: [project, linters, protos, man]
     env:
       GOTEST: gotestsum --
 
